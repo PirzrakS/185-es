@@ -1,0 +1,20 @@
+{
+  "version": 2,
+  "weeklyExtras": {
+    "mon": [
+      {
+        "time": "8:00",
+        "title": "Разговоры о важном",
+        "place": ""
+      }
+    ],
+    "sat": [
+      {
+        "time": "8:00",
+        "title": "Разговоры о важном",
+        "place": ""
+      }
+    ]
+  },
+  "overrides": {}
+}

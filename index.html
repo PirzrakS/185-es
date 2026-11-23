@@ -1,0 +1,160 @@
+<!doctype html>
+<html lang="ru">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Расписание</title>
+  <meta name="description" content="Расписание занятий группы: пары, внеурочка, чередование недель.">
+  <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'%3E%3Crect width='100' height='100' rx='26' fill='%234f46e5'/%3E%3Ctext x='50' y='66' font-family='Segoe UI,Arial' font-size='42' font-weight='700' fill='white' text-anchor='middle'%3E185%3C/text%3E%3C/svg%3E">
+  <link rel="stylesheet" href="./style.css">
+</head>
+<body>
+  <div class="bg" id="bg" aria-hidden="true">
+    <div class="bg-gradient"></div>
+    <div class="orbs" id="orbs">
+      <span class="orb orb-1"></span>
+      <span class="orb orb-2"></span>
+      <span class="orb orb-3"></span>
+      <span class="orb orb-4"></span>
+      <span class="orb orb-5"></span>
+      <span class="orb orb-6"></span>
+      <span class="orb orb-7"></span>
+    </div>
+    <div class="particles">
+      <span class="particle"></span>
+      <span class="particle"></span>
+      <span class="particle"></span>
+      <span class="particle"></span>
+      <span class="particle"></span>
+      <span class="particle"></span>
+      <span class="particle"></span>
+      <span class="particle"></span>
+    </div>
+    <div class="bg-grain"></div>
+  </div>
+
+  <a class="skip-link" href="#grid">К расписанию</a>
+
+  <header class="topbar">
+    <div class="wrap topbar-in">
+      <div class="brand" id="brand">
+        <span class="brand-mark" id="badge" aria-hidden="true">185</span>
+        <div class="brand-text">
+          <h1 id="groupName">Расписание</h1>
+          <p id="groupSub"></p>
+        </div>
+      </div>
+
+      <div class="week-switch" role="tablist" aria-label="Выбор недели">
+        <button class="week-btn" type="button" role="tab" data-week="1" aria-selected="true" aria-controls="grid">1 неделя</button>
+        <button class="week-btn" type="button" role="tab" data-week="2" aria-selected="false" aria-controls="grid">2 неделя</button>
+      </div>
+
+      <button class="btn btn-ghost" id="editToggle" type="button" aria-pressed="false">
+        <span class="edit-icon" aria-hidden="true">✎</span>
+        <span id="editLabel">Редактировать</span>
+      </button>
+    </div>
+  </header>
+
+  <main class="wrap">
+    <div class="statusbar">
+      <p class="chip chip-status" id="weekStatus">Загрузка…</p>
+      <p class="chip chip-dates" id="weekDates"></p>
+      <p class="chip chip-override" id="overrideChip" hidden>Сегодня замена</p>
+      <p class="chip chip-draft" id="draftChip" hidden>черновик</p>
+      <p class="chip chip-summary" id="weekSummary"></p>
+    </div>
+
+    <section class="now" id="nowCard" hidden aria-live="polite">
+      <div class="now-info">
+        <p class="now-label" id="nowLabel"></p>
+        <p class="now-title" id="nowTitle"></p>
+        <p class="now-meta" id="nowMeta"></p>
+      </div>
+      <p class="now-next" id="nowNext"></p>
+    </section>
+
+    <p class="hint" id="hint"></p>
+
+    <div class="loadstate" id="loadState">
+      <p id="loadStateText">Загружаем расписание…</p>
+      <button class="btn btn-small" id="retryBtn" type="button" hidden>Повторить</button>
+    </div>
+
+    <section class="grid" id="grid" hidden aria-live="polite"></section>
+
+    <section class="admin-panel" id="adminPanel" aria-label="Панель администратора">
+      <span class="admin-badge">Админ</span>
+      <button class="btn btn-small" id="recalcTimes" type="button">Пересчитать время</button>
+      <button class="btn btn-small" id="copyWeek" type="button">Скопировать неделю</button>
+      <button class="btn btn-small" id="clearWeek" type="button">Очистить неделю</button>
+      <button class="btn btn-small btn-primary" id="saveBtn" type="button">Сохранить</button>
+      <button class="btn btn-small" id="exportBtn" type="button">Скачать JSON</button>
+      <button class="btn btn-small" id="exportOverridesBtn" type="button">Скачать замены</button>
+      <button class="btn btn-small" id="importBtn" type="button">Загрузить JSON</button>
+      <input type="file" id="importFile" accept="application/json,.json" hidden>
+      <button class="btn btn-small" id="resetBtn" type="button">Вернуть из файла</button>
+      <button class="btn btn-small btn-ghost" id="exitAdmin" type="button">Выйти</button>
+      <span class="admin-status" id="adminStatus"></span>
+    </section>
+  </main>
+
+  <dialog class="editor" id="editor" aria-labelledby="editorTitle">
+    <form class="editor-form" id="editorForm" method="dialog">
+      <h2 id="editorTitle">Пара</h2>
+
+      <label class="field">
+        <span id="labelSubject">Предмет</span>
+        <input id="fSubject" type="text" autocomplete="off" placeholder="Математика">
+        <small class="field-note" id="subjectNote">Начните вводить «матем», «англ», «физра» — время, преподаватель и аудитория подставятся сами.</small>
+      </label>
+
+      <div class="field-row">
+        <label class="field">
+          <span>Время</span>
+          <input id="fTime" type="text" autocomplete="off" placeholder="8:30–10:00">
+        </label>
+        <label class="field">
+          <span id="labelRoom">Аудитория</span>
+          <input id="fRoom" type="text" autocomplete="off" placeholder="122">
+        </label>
+      </div>
+
+      <label class="field" id="teacherField">
+        <span>Преподаватель</span>
+        <input id="fTeacher" type="text" autocomplete="off" placeholder="Мишина В.Ю">
+      </label>
+
+      <details class="alt-block" id="altBlock">
+        <summary>Вторая подгруппа (если пара делится)</summary>
+        <label class="field">
+          <span>Предмет</span>
+          <input id="fAltSubject" type="text" autocomplete="off" placeholder="Иностранный язык">
+        </label>
+        <div class="field-row">
+          <label class="field">
+            <span>Преподаватель</span>
+            <input id="fAltTeacher" type="text" autocomplete="off" placeholder="Жулябина О.В">
+          </label>
+          <label class="field">
+            <span>Аудитория</span>
+            <input id="fAltRoom" type="text" autocomplete="off" placeholder="306/312">
+          </label>
+        </div>
+      </details>
+
+      <div class="editor-actions">
+        <button class="btn btn-small btn-danger" id="editorDelete" type="button">Удалить</button>
+        <span class="grow"></span>
+        <button class="btn btn-small" id="editorCancel" type="button">Отмена</button>
+        <button class="btn btn-small btn-primary" type="submit">Сохранить</button>
+      </div>
+    </form>
+  </dialog>
+
+  <div class="toast" id="toast" role="status" aria-live="polite"></div>
+
+  <script src="./script.js" defer></script>
+</body>
+</html>

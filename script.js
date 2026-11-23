@@ -65,6 +65,7 @@
 
   let data = null;
   let overrides = {};
+  let weeklyExtras = {};
   let viewWeek = 1;
   let editMode = false;
   let editing = null;
@@ -179,16 +180,41 @@
     };
   }
 
-  function normalizeOverrides(raw) {
-    if (!raw || typeof raw !== "object") return {};
-    const source = raw.overrides && typeof raw.overrides === "object" ? raw.overrides : raw;
+  function normalizeExtrasMap(raw) {
     const result = {};
+    DAYS.forEach((day) => {
+      const list = raw && Array.isArray(raw[day.key]) ? raw[day.key].map(normalizeExtra) : [];
+      result[day.key] = list;
+    });
+    return result;
+  }
+
+  function extrasFromSchedule(schedule) {
+    const result = {};
+    DAYS.forEach((day) => {
+      const first = schedule.weeks["1"] && schedule.weeks["1"][day.key] ? schedule.weeks["1"][day.key].extras : [];
+      const second = schedule.weeks["2"] && schedule.weeks["2"][day.key] ? schedule.weeks["2"][day.key].extras : [];
+      const source = first && first.length ? first : second || [];
+      result[day.key] = clone(source);
+    });
+    return result;
+  }
+
+  function normalizeOverrides(raw) {
+    const result = { weeklyExtras: null, byDate: {} };
+    if (!raw || typeof raw !== "object") return result;
+
+    if (raw.weeklyExtras && typeof raw.weeklyExtras === "object") {
+      result.weeklyExtras = normalizeExtrasMap(raw.weeklyExtras);
+    }
+
+    const source = raw.overrides && typeof raw.overrides === "object" ? raw.overrides : {};
     Object.entries(source).forEach(([iso, value]) => {
       if (!/^\d{4}-\d{2}-\d{2}$/.test(iso)) return;
       if (!value || typeof value !== "object") return;
       const pairs = Array.isArray(value.pairs) ? value.pairs.map(normalizePair) : [];
       pairs.sort((a, b) => a.n - b.n);
-      result[iso] = {
+      result.byDate[iso] = {
         note: String(value.note || ""),
         pairs,
         extras: Array.isArray(value.extras) ? value.extras.map(normalizeExtra) : undefined,
@@ -297,13 +323,16 @@
   }
 
   function planForDate(date) {
+    const index = dayIndexForDate(date);
     const base = basePlanForDate(date);
     const override = overrides[isoOf(date)] || null;
+    const dayKey = index >= 0 ? DAYS[index].key : null;
+    const extras = dayKey ? weeklyExtras[dayKey] || [] : [];
 
     if (override) {
       return {
         pairs: override.pairs.slice().sort((a, b) => a.n - b.n),
-        extras: override.extras || base.extras,
+        extras: Array.isArray(override.extras) ? override.extras : extras,
         override,
         base,
       };
@@ -311,7 +340,7 @@
 
     return {
       pairs: base.pairs,
-      extras: base.extras,
+      extras,
       override: null,
       base,
     };
@@ -428,7 +457,9 @@
 
   function applyDraft(draft) {
     data = normalizeData(draft.schedule);
-    overrides = normalizeOverrides(draft.overrides);
+    const parsed = normalizeOverrides(draft.overrides);
+    overrides = parsed.byDate;
+    weeklyExtras = parsed.weeklyExtras || extrasFromSchedule(data);
     subjectIndex = null;
     viewWeek = currentWeekNumber();
     hasDraft = true;
@@ -446,7 +477,9 @@
       ]);
 
       data = normalizeData(scheduleRaw);
-      overrides = overridesRaw ? normalizeOverrides(overridesRaw) : {};
+      const parsedOverrides = normalizeOverrides(overridesRaw);
+      overrides = parsedOverrides.byDate;
+      weeklyExtras = parsedOverrides.weeklyExtras || extrasFromSchedule(data);
       subjectIndex = null;
       viewWeek = currentWeekNumber();
 
@@ -863,16 +896,21 @@
   function editTarget(dateISO, kind) {
     const key = kind === "pair" ? "pairs" : "extras";
     const override = overrides[dateISO];
+    const dayKey = dayKeyForDate(parseISO(dateISO)) || "mon";
 
     if (override) {
       if (key === "extras" && !Array.isArray(override.extras)) {
-        override.extras = clone(basePlanForDate(parseISO(dateISO)).extras);
+        override.extras = clone(weeklyExtras[dayKey] || []);
       }
       if (!Array.isArray(override[key])) override[key] = [];
       return { kind, source: "overrides", dateISO, list: override[key] };
     }
 
-    const dayKey = dayKeyForDate(parseISO(dateISO));
+    if (kind === "extra") {
+      if (!Array.isArray(weeklyExtras[dayKey])) weeklyExtras[dayKey] = [];
+      return { kind, source: "overrides", dateISO, list: weeklyExtras[dayKey] };
+    }
+
     const list = dayKey ? weekOf(viewWeek)[dayKey][key] : [];
     return { kind, source: "base", dateISO, list };
   }
@@ -1135,7 +1173,6 @@
     overrides[dateISO] = {
       note: "",
       pairs: clone(base.pairs),
-      extras: clone(base.extras),
     };
     markDirty("overrides");
     render();
@@ -1187,11 +1224,6 @@
     DAYS.forEach((day) => {
       const info = week[day.key];
       result[day.key] = {
-        extras: info.extras.map((item) => ({
-          time: item.time,
-          title: item.title,
-          place: item.place || "",
-        })),
         pairs: info.pairs
           .slice()
           .sort((a, b) => a.n - b.n)
@@ -1230,7 +1262,15 @@
   }
 
   function exportOverridesPayload() {
-    const result = { version: 1, overrides: {} };
+    const result = { version: 2, weeklyExtras: {}, overrides: {} };
+
+    DAYS.forEach((day) => {
+      const list = weeklyExtras[day.key];
+      if (Array.isArray(list) && list.length) {
+        result.weeklyExtras[day.key] = cleanExtras(list);
+      }
+    });
+
     Object.keys(overrides)
       .sort()
       .forEach((iso) => {
@@ -1322,6 +1362,101 @@
     downloaded = true;
     updateAdminUi();
     showToast("overrides.json скачан — замените файл в репозитории");
+  }
+
+  /* ---------- ZIP с двумя JSON ---------- */
+  let crcTable = null;
+
+  function crc32(bytes) {
+    if (!crcTable) {
+      crcTable = new Uint32Array(256);
+      for (let i = 0; i < 256; i += 1) {
+        let value = i;
+        for (let bit = 0; bit < 8; bit += 1) {
+          value = value & 1 ? 0xedb88320 ^ (value >>> 1) : value >>> 1;
+        }
+        crcTable[i] = value >>> 0;
+      }
+    }
+    let crc = 0xffffffff;
+    for (let i = 0; i < bytes.length; i += 1) {
+      crc = crcTable[(crc ^ bytes[i]) & 0xff] ^ (crc >>> 8);
+    }
+    return (crc ^ 0xffffffff) >>> 0;
+  }
+
+  function buildZip(files) {
+    const encoder = new TextEncoder();
+    const parts = [];
+    const central = [];
+    let offset = 0;
+
+    files.forEach((file) => {
+      const name = encoder.encode(file.name);
+      const data = encoder.encode(file.text);
+      const crc = crc32(data);
+
+      const local = new Uint8Array(30 + name.length);
+      const localView = new DataView(local.buffer);
+      localView.setUint32(0, 0x04034b50, true);
+      localView.setUint16(4, 20, true);
+      localView.setUint16(6, 0x0800, true);
+      localView.setUint32(14, crc, true);
+      localView.setUint32(18, data.length, true);
+      localView.setUint32(22, data.length, true);
+      localView.setUint16(26, name.length, true);
+      local.set(name, 30);
+
+      const entry = new Uint8Array(46 + name.length);
+      const entryView = new DataView(entry.buffer);
+      entryView.setUint32(0, 0x02014b50, true);
+      entryView.setUint16(4, 20, true);
+      entryView.setUint16(6, 20, true);
+      entryView.setUint16(8, 0x0800, true);
+      entryView.setUint32(16, crc, true);
+      entryView.setUint32(20, data.length, true);
+      entryView.setUint32(24, data.length, true);
+      entryView.setUint16(28, name.length, true);
+      entryView.setUint32(42, offset, true);
+      entry.set(name, 46);
+
+      parts.push(local, data);
+      central.push(entry);
+      offset += local.length + data.length;
+    });
+
+    const centralSize = central.reduce((sum, part) => sum + part.length, 0);
+    const end = new Uint8Array(22);
+    const endView = new DataView(end.buffer);
+    endView.setUint32(0, 0x06054b50, true);
+    endView.setUint16(8, files.length, true);
+    endView.setUint16(10, files.length, true);
+    endView.setUint32(12, centralSize, true);
+    endView.setUint32(16, offset, true);
+
+    return new Blob([...parts, ...central, end], { type: "application/zip" });
+  }
+
+  function downloadZip() {
+    if (!data) return;
+    const files = [
+      { name: "schedule.json", text: `${JSON.stringify(exportPayload(), null, 2)}\n` },
+      { name: "overrides.json", text: `${JSON.stringify(exportOverridesPayload(), null, 2)}\n` },
+    ];
+    const blob = buildZip(files);
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement("a");
+    link.href = url;
+    link.download = "185-es-files.zip";
+    document.body.append(link);
+    link.click();
+    link.remove();
+    window.setTimeout(() => URL.revokeObjectURL(url), 1000);
+    dirtyBase = false;
+    dirtyOverrides = false;
+    downloaded = true;
+    updateAdminUi();
+    showToast("ZIP с двумя JSON скачан — распакуйте перед загрузкой на GitHub");
   }
 
   function importJson(file) {
@@ -1428,6 +1563,8 @@
   $("#saveBtn").addEventListener("click", () => saveDraft());
 
   $("#exportOverridesBtn").addEventListener("click", downloadOverrides);
+
+  $("#exportZipBtn").addEventListener("click", downloadZip);
 
   $("#importBtn").addEventListener("click", () => $("#importFile").click());
 
